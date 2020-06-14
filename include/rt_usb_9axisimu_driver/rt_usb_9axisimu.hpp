@@ -32,12 +32,19 @@
 #include <math.h>
 
 #include <stdlib.h>
+
+#if defined(_WIN32) || defined(_WIN64)
+#include <windows.h>
+#else
+#include <stdio.h>
+#include <string.h>
+#include <fcntl.h>
+#include <termios.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
-#include <termios.h>
-#include <unistd.h>
-#include <fcntl.h>
+typedef int HANDLE;
+#endif
 
 #include <sstream>
 
@@ -139,12 +146,22 @@ namespace RtUsbImu
   {
     private:
       std::string port_name; // ex) "/dev/ttyACM0"
+      HANDLE port_fd;
+
+#if defined(_WIN32) || defined(_WIN64)
+#else
       struct termios oldSettings;
-      int port_fd;
+#endif
 
     public:
-      SerialPort(const char* port = "") : port_name(port), port_fd(-1){
-      }
+      SerialPort(const char* port = "") : 
+      port_name(port), 
+#if defined(_WIN32) || defined(_WIN64)
+      port_fd(NULL)
+#else
+      port_fd(-1)
+#endif
+     {}
       
       ~SerialPort() {
         Close();
@@ -156,7 +173,20 @@ namespace RtUsbImu
       }
 
       bool Open() {
-        int fd = 0;
+#if defined(_WIN32) || defined(_WIN64)
+		port_fd = CreateFile(port_name.c_str(), GENERIC_READ|GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		if(port_fd==INVALID_HANDLE_VALUE) return false;
+        
+		DCB dcb;
+		GetCommState(port_fd, &dcb);
+
+		dcb.BaudRate = 57600;
+		int ret = SetCommState(port_fd, &dcb);
+        if(ret == 0) return false;
+        
+        return true;
+#else
+      int fd = 0;
 
         if(port_fd > 0) {
           return true;
@@ -179,31 +209,50 @@ namespace RtUsbImu
         port_fd = fd;
 
         return (fd > 0);
-
+#endif
       }
 
       void Close() {
+#if defined(_WIN32) || defined(_WIN64)
+		CloseHandle(port_fd);
+		port_fd = 0;
+#else
         if(port_fd > 0) {
           tcsetattr(port_fd, TCSANOW, &oldSettings);
           close(port_fd);  //Close serial port
           port_fd = -1;
         }
+#endif
       }
 
       int Read(unsigned char* buf, unsigned int buf_len) {
-        if(port_fd < 0) {
+#if defined(_WIN32) || defined(_WIN64)
+		DWORD rcv_size;
+		if(!ReadFile(port_fd, buf, buf_len, &rcv_size, NULL))
+			return -1;
+		return (int)rcv_size;
+#else
+      if(port_fd < 0) {
           return -1;
         }
 
         return  read(port_fd, buf, buf_len);
+#endif
       }
 
       int Write(unsigned char* data, unsigned int data_len) {
+#if defined(_WIN32) || defined(_WIN64)
+		DWORD xmit_size;
+		if(!WriteFile(port_fd, data, data_len, &xmit_size, NULL))
+			return -1;
+		return (int)xmit_size;
+#else
         if(port_fd < 0) {
           return -1;
         }
 
         return write(port_fd, data, data_len);
+#endif
       }
   };
   
